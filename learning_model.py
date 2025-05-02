@@ -97,78 +97,93 @@ val_loader = DataLoader(val_dataset, batch_size=batch_size) # 검증용 데이�
 # ------------------------------ #
 # 3. 모델 구성 및 최적화기
 # ------------------------------ #
-
-# KM-BERT 분류 모델 초기화 (클래스 수 지정)
-model = BertForSequenceClassification.from_pretrained(model_name, num_labels=num_classes)
+model = BertForSequenceClassification.from_pretrained(model_name, num_labels=num_classes) # KM-BERT 분류 모델 초기화 (클래스 수 지정)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu") # GPU 사용 여부 설정
 model.to(device) # 모델을 GPU 또는 CPU에 로드
 
 optimizer = AdamW(model.parameters(), lr=lr) # Adamw 옵티마이저 설정
-lr_scheduler = get_scheduler("linear", optimizer=optimizer, num_warmup_steps=0, num_training_steps=len(train_loader) * num_epochs)
+lr_scheduler = get_scheduler( # 학습률 스케줄러 설정
+    "linear", # 선형 감소 스케줄
+    optimizer=optimizer, # 적용할 옵티마이저
+    num_warmup_steps=0, # 워밍업 단계 없음
+    num_training_steps=len(train_loader) * num_epochs # 전체 학습 스텝 수 설정
+)
 
 # ------------------------------ #
 # 4. 체크포인트 로드 (이어 학습)
 # ------------------------------ #
-latest_epoch = 1
-checkpoint_files = sorted([f for f in os.listdir(save_dir) if f.startswith(f"disease_classifier_epoch") and f.endswith(f"_{num_records}.pt")])
+latest_epoch = 0 # 기본 시작 epoch를 0으로 설정
+checkpoint_files = sorted([ # 체크포인트 파일들을 정렬하여 리스트로 저장
+    f for f in os.listdir(save_dir) # 저장 디렉토리 내 파일 목록을 순회
+    if f.startswith(f"disease_classifier_epoch") and f.endswith(f"_{num_records}.pt") # 지정된 형식의 파일만 필터링
+])
 
-if checkpoint_files:
-    latest_checkpoint = os.path.join(save_dir, checkpoint_files[-1])
-    checkpoint = torch.load(latest_checkpoint, map_location=device, weights_only=False)
-    model.load_state_dict(checkpoint["model_state_dict"])
-    label_encoder = checkpoint["label_encoder"]
-    latest_epoch = checkpoint["epoch"]
+if checkpoint_files: # 체크포인트 파일이 있는 경우
+    latest_checkpoint = os.path.join(save_dir, checkpoint_files[-1]) # 가장 마지막 체크포인트 경로
+    checkpoint = torch.load(latest_checkpoint, map_location=device, weights_only=False) # 체크포인트 로드
+    model.load_state_dict(checkpoint["model_state_dict"]) # 모델 파라미터 로드
+    label_encoder = checkpoint["label_encoder"] # 레이블 인코더 로드
+    latest_epoch = checkpoint["epoch"] # 마지막 학습된 epoch 불러오기
+    
+    # 체크포인트 로드 성공 메시지 출력
     print(f"✅ 체크포인트 로드 완료: {latest_checkpoint} | 이어서 epoch {latest_epoch + 1}부터 시작")
-else:
+else: # 체크포인트 파일이 없는 경우 초기 학습 시작 안내
     print("ℹ️ 기존 체크포인트 없음. 처음부터 학습 시작")
 
 # ------------------------------ #
 # 5. 학습 루프
 # ------------------------------ #
-for epoch in range(latest_epoch, num_epochs):
-    model.train()
+for epoch in range( # 학습을 재개할 epoch부터 num_epochs까지 반복
+    latest_epoch, 
+    num_epochs
+):
+    model.train() # 모델을 학습 모드로 설정
     total_loss = 0  # 에폭 전체 손실 누적
     correct = 0  # 정답 맞춘 개수
     total = 0  # 전체 샘플 개수
 
-    for batch in tqdm(train_loader, desc=f"Epoch {epoch+1}"):
-        batch = {k: v.to(device) for k, v in batch.items()}
-        outputs = model(**batch)
-        loss = outputs.loss
+    for batch in tqdm(train_loader, desc=f"Epoch {epoch+1}"): # 학습 데이터 반복
+        batch = {k: v.to(device) for k, v in batch.items()} # 배치를 GPU 또는 CPU로 이동
+        outputs = model(**batch) # 모델에 배치 입력
+        loss = outputs.loss # 손실 계산
 
-        loss.backward()
-        optimizer.step()
-        lr_scheduler.step()
-        optimizer.zero_grad()
+        loss.backward() # 역전파 수행
+        optimizer.step() # 가중치 업데이트
+        lr_scheduler.step() # 학습률 스케줄러 업데이트
+        optimizer.zero_grad() # 기울기 초기화
 
-        total_loss += loss.item()
+        total_loss += loss.item() # 손실 누적
 
-        # 예측값 계산 (softmax 없이 argmax만으로 가능)
-        preds = torch.argmax(outputs.logits, dim=1)
-        labels = batch["labels"]
+        preds = torch.argmax(outputs.logits, dim=1) # 각 샘플에 대해 예측한 클래스 인덱스 추출
+        labels = batch["labels"] # 정답 레이블 추출
 
-        correct += (preds == labels).sum().item()  # 정답 개수 누적
-        total += labels.size(0)  # 전체 개수 누적
+        correct += (preds == labels).sum().item() # 맞춘 샘플 수 누적
+        total += labels.size(0) # 전체 샘플 수 누적
 
-    accuracy = correct / total  # 정확도 계산
-    print(f"Epoch {epoch+1} Loss: {total_loss:.4f} | Accuracy: {accuracy:.4f}")
+    accuracy = correct / total # 정확도 계산
+    print(f"Epoch {epoch+1} Loss: {total_loss:.4f} | Accuracy: {accuracy:.4f}") # 현재 에폭의 손실과 정확도 출력
 
-    # 중간 저장
-    checkpoint_path = os.path.join(save_dir, f"disease_classifier_epoch{epoch+1}_{num_records}.pt")
-    torch.save({
-        "epoch": epoch + 1,
-        "model_state_dict": model.state_dict(),
-        "label_encoder": label_encoder,
+    # 에폭별 체크포인트 파일 경로 생성
+    checkpoint_path = os.path.join(save_dir, f"disease_classifier_epoch{epoch+1}_{num_records}.pt") 
+    torch.save({ # 모델 체크포인트 저장 
+        "epoch": epoch + 1, # 현재 에폭 번호
+        "model_state_dict": model.state_dict(), # 모델 가중치 저장
+        "label_encoder": label_encoder, # 라벨 인코더 저장
     }, checkpoint_path)
-    print(f"🔄 중간 저장 완료: {checkpoint_path}")
+    
+    # 저장 완료 로그 출력
+    print(f"🔄 중간 저장 완료: {checkpoint_path}") 
 
 # ------------------------------ #
 # 6. 최종 모델 저장
 # ------------------------------ #
+# 최종 모델 저장 경로 설정
 final_model_path = os.path.join(save_dir, f"disease_classifier_final_{num_records}.pt")
-torch.save({
-    "model_state_dict": model.state_dict(),
-    "label_encoder": label_encoder,
-}, final_model_path)
 
+torch.save({ # 최종 모델 저장
+    "model_state_dict": model.state_dict(), # 모델의 학습된 가중치 저장
+    "label_encoder": label_encoder, # 라벨 인코더 객체 저장
+}, final_model_path) 
+
+# 저장 완료 메시지 출력
 print(f"✅ 모델 저장 완료: {final_model_path}")
