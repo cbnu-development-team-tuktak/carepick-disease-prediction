@@ -1,131 +1,51 @@
-# Requests 및 데이터 핸들링 관련 import
-import requests  # HTTP 요청을 보내기 위한 라이브러리
-import pandas as pd  # 데이터프레임(DataFrame) 처리 라이브러리
+import csv
+import re
 
-from generate_sentence import SentenceGenerator  # 균형 잡힌 문장 생성 함수
+# 🔧 입력 파일 경로 (텍스트 원본)
+INPUT_FILE = 'raw_sentences.txt'
 
-# 질병 템플릿 관련 import
-from template.disease_templates import (
-    disease_templates_formal, # 존댓말형
-    disease_templates_informal, # 반말형
-    disease_templates_awkward, # 횡설수설형
-    disease_templates_lazy # 단답형
-)
-# 증상 템플릿 관련 import
-from template.symptom_templates import (
-    symptom_templates_formal, # 존댓말형
-    symptom_templates_informal, # 반말형
-    symptom_templates_awkward, # 횡설수설형
-    symptom_templates_lazy # 단답형
-)
+# 📄 출력 CSV 파일 경로
+OUTPUT_FILE = 'train_dataset.csv'
 
-# ------------------------- #
-# 1. 데이터 로딩
-# ------------------------- #
-def load_data(
-    disease_url, # 질병 정보 API URL
-    symptom_url # 증상 정보 API URL
-):
-    disease_response = requests.get(disease_url) # 질병 목록 API 요청
-    symptom_response = requests.get(symptom_url) # 증상 목록 API 요청
-    disease_response.raise_for_status() # 요청 실패 시 예외 발생
-    symptom_response.raise_for_status() # 요청 실패 시 예외 발생
+# ⚠️ 파싱 실패했을 때 저장할 백업 파일 (현재는 사용 안 함)
+# SKIPPED_FILE = 'skipped_lines.txt'
 
-    diseases = disease_response.json()['content'] # 질병 목록 추출
-    symptoms = symptom_response.json()['content'] # 증상 목록 추출
+def clean_text(text: str) -> str:
+    """큰따옴표를 제거하고 앞뒤 공백 제거"""
+    return text.replace('"', '').strip()
 
-    # 질병 목록과 증상 목록을 반환
-    return diseases, symptoms
+def parse_line(line: str):
+    """정규식 파싱 시도, 실패하면 대체 파싱 방식 적용"""
+    # 1차 시도: 제대로 된 형식
+    match = re.match(r'(.+?),"(.*)",(\d+)', line)
+    if match:
+        disease = clean_text(match.group(1))
+        sentence = clean_text(match.group(2))
+        style = match.group(3)
+        return disease, sentence, style
 
-# 증상 ID를 이름으로 매핑
-def map_symptom_ids_to_names(
-    symptoms # 증상 목록
-):
-    # {id: 이름} 형태의 딕셔너리 반환
-    return {symptom['id']: symptom['name'] for symptom in symptoms}
+    # 2차 시도: 큰따옴표 누락되었거나 콤마만 있는 경우
+    parts = line.strip().split(',')
+    if len(parts) >= 3:
+        disease = clean_text(parts[0])
+        style = clean_text(parts[-1])
+        sentence = clean_text(','.join(parts[1:-1]))
+        return disease, sentence, style
 
-# ------------------------- #
-# 2. 문장 생성
-# ------------------------- #
-def generate_dataset(
-    diseases, # 질병 목록
-    symptom_id_to_name # { 증상 ID: 증상명 } 매핑 딕셔너리
-):
-    # 문장 생성기 초기화
-    sentence_generator = SentenceGenerator(
-        disease_templates={
-            "formal": disease_templates_formal, # 존댓말형 
-            "informal": disease_templates_informal, # 반말형
-            "awkward": disease_templates_awkward, # 횡설수설형
-            "lazy": disease_templates_lazy # 단답형
-        },
-        symptom_templates={
-            "formal": symptom_templates_formal, # 존댓말형 
-            "informal": symptom_templates_informal, # 반말형
-            "awkward": symptom_templates_awkward, # 횡설수설형
-            "lazy": symptom_templates_lazy # 단답형
-        } 
-    )
+    # 3차 시도: 그냥 전부 넣기
+    return line.strip(), '', ''  # 저장은 되게 하되, 비정상 줄은 구분 가능
 
-    # 생성된 문장을 저장할 리스트
-    generated_data = []
+def main():
+    with open(INPUT_FILE, 'r', encoding='utf-8') as infile, \
+         open(OUTPUT_FILE, 'w', encoding='utf-8', newline='') as outfile:
 
-    # 각 질병에 대해 반복
-    for disease in diseases:
-        # 질병에 연결된 증상 이름 추출
-        symptom_names = [symptom_id_to_name.get(id) for id in disease['symptoms']]
-        # 유효한 증상 이름만 필터링
-        symptom_names = [name for name in symptom_names if name]
+        writer = csv.writer(outfile)
 
-        if not symptom_names: # 증상이 없는 경우
-            print(f"Warning: Disease '{disease['name']}' has no symptoms. Skipping.") # 경고 출력
-            continue # 해당 질병은 건너뜀
-        
-        # 한 질병에 대해 여러 문장을 생성
-        results = sentence_generator.generate_sentences(
-            [disease], # 단일 질병 정보만 전달 
-            symptom_id_to_name, # 증상 ID → 이름 매핑
-        )
+        for line in infile:
+            parsed = parse_line(line)
+            writer.writerow(parsed)  # 무조건 저장
 
-        # 생성된 문장 결과들을 반복
-        for result in results:
-            # 각 문장을 딕셔너리 형태로 저장
-            generated_data.append({
-                'disease_id': result['disease_id'], # 질병 ID
-                'disease_name': result['disease_name'], # 질병명 
-                'generated_sentence': result['generated_sentence'] # 생성된 문장
-            })
+    print(f"✅ 전체 줄 저장 완료: {OUTPUT_FILE}")
 
-    # 최종 결과를 데이터프레임 형태로 반환
-    return pd.DataFrame(generated_data)
-
-# ------------------------- #
-# 3. CSV 저장
-# ------------------------- #
-def save_to_csv(
-    df, # 저장할 데이터프레임
-    filename # 저장할 파일 이름
-):  
-    # 인덱스 없이 UTF-8-SIG 인코딩으로 저장
-    df.to_csv(filename, index=False, encoding='utf-8-sig')
-
-# ------------------------- #
-# 메인 실행 흐름
-# ------------------------- #
-if __name__ == "__main__":
-    # 질병 정보 API 주소
-    DISEASE_API_URL = "http://localhost:8080/api/diseases/processed?page=0&size=500"
-    # 증상 정보 API 주소
-    SYMPTOM_API_URL = "http://localhost:8080/api/symptoms?page=0&size=3000"
-
-    # 질병 및 증상 데이터 로드
-    diseases, symptoms = load_data(DISEASE_API_URL, SYMPTOM_API_URL)
-
-    # 증상 ID → 증상명 매핑 생성
-    symptom_id_to_name = map_symptom_ids_to_names(symptoms)
-
-    # 문장 데이터셋 생성
-    generated_df = generate_dataset(diseases, symptom_id_to_name)
-
-    # 생성된 문장을 CSV 파일로 저장
-    save_to_csv(generated_df, 'generated_disease_sentences.csv')
+if __name__ == '__main__':
+    main()
