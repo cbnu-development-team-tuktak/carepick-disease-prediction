@@ -192,8 +192,6 @@ def predict_and_evaluate(
     # 누적된 예측 및 평가 결과 리스트를 DataFrame으로 반환
     return pd.DataFrame(results)
 
-
-
 # ---------------------------- #
 # 질병 리스트 불러오기
 # ---------------------------- #

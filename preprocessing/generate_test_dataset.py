@@ -212,7 +212,7 @@ with open("csv/disease_list.csv", encoding="utf-8-sig") as f:
 if __name__ == "__main__":
     disease_df = pd.read_csv("csv/disease_list.csv") # 질병 목록 로드
     for idx, label in enumerate(disease_df["질병명"]):
-        if idx < 57:  # 0부터 시작이므로 39 == 40번째 줄 (경추통)
+        if idx < 77:  # 0부터 시작이므로 39 == 40번째 줄 (경추통)
             continue  # 앞부분은 건너뜀
         
         label = label.strip('"')  # 큰따옴표 제거
